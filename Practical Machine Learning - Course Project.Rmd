@@ -1,0 +1,162 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Rishi Wadhera"
+date: "9/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. This report will describe how the models were built, how cross validation was used, what the expected outcome of sample error is, and why each was chosen.
+
+## Data  
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+## Data Cleaning  
+
+First, the necessary libraries shall be loaded and download the data.
+
+```{r}
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(e1071)
+library(randomForest)
+library(corrplot)
+library(gbm)
+
+urlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training <- read.csv(url(urlTrain))
+testing  <- read.csv(url(urlTest))
+
+set.seed(69420)
+inTrain  <- createDataPartition(training$classe, p=0.7, list=FALSE)
+trainSet <- training[inTrain, ]
+testSet  <- training[-inTrain, ]
+```
+
+Since the test data is provided, the training data is split into training and validation data. We won't look at the test data until later.
+
+We can take a quick look at the data to explore it a bit.
+
+```{r}
+dim(trainSet)
+str(trainSet)
+```
+
+There are 160 variables in the data and we will need to have the NA's removed along with the variables with near zero variance. The first seven variables may be removed since they don't have anything to do with our analysis.
+
+```{r}
+trainSet <- trainSet[, -c(1:7)]
+testSet <- testSet[, -c(1:7)]
+
+NZV <- nearZeroVar(trainSet)
+
+trainSet <- trainSet[, -NZV]
+testSet  <- testSet[, -NZV]
+allNA    <- sapply(trainSet, function(x) mean(is.na(x))) > 0.95
+trainSet <- trainSet[, allNA==FALSE]
+testSet  <- testSet[, allNA==FALSE]
+
+dim(trainSet)
+```
+
+After cleaning, we now have 53 variables.
+
+## Variable Correlation  
+
+Since the number of variables is still very high (53), it would help to perform a comparison where we correlate each variable against all of the remaining variables. 
+
+```{r}
+corMatrix <- cor(trainSet[, -53])
+corrplot(corMatrix, order = "FPC", method = "color", type = "upper", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+
+
+## Prediction Models  
+
+We will attempt to use three different methods to build predictive models of the trainSet data which are Random Forest, Decision Tree, and Generalized Boosted Model. Whichever model produces the most accurate results will be used as our final model. There are methods to combine multiple models to further improve accuracy, though we will see whether that is necessary.
+
+### Random Forest  
+
+```{r Random Forest 1}
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modFitRF <- train(classe ~ ., data=trainSet, method="rf", trControl=controlRF)
+modFitRF$finalModel
+```
+
+```{r Random Forest 2}
+predictRF <- predict(modFitRF, newdata=testSet)
+confMatRF <- confusionMatrix(table(predictRF, testSet$classe))
+confMatRF
+plot(confMatRF$table, col = confMatRF$byClass, main = paste("Random Forest - Accuracy =", round(confMatRF$overall['Accuracy'], 4)))
+```
+
+### Decision Tree  
+
+```{r}
+modFitDT <- rpart(classe ~ ., data=trainSet, method="class")
+fancyRpartPlot(modFitDT)
+predictDT <- predict(modFitDT, newdata=testSet, type="class")
+confMatDecTree <- confusionMatrix(table(predictDT, testSet$classe))
+confMatDecTree
+plot(confMatDecTree$table, col = confMatDecTree$byClass, main = paste("Decision Tree - Accuracy =", round(confMatDecTree$overall['Accuracy'], 4)))
+```
+
+### Generalized Boosted Model  
+
+```{r}
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM  <- train(classe ~ ., data=trainSet, method = "gbm", trControl = controlGBM, verbose = FALSE)
+modFitGBM$finalModel
+predictGBM <- predict(modFitGBM, newdata=testSet)
+confMatGBM <- confusionMatrix(table(predictGBM, testSet$classe))
+confMatGBM
+plot(confMatGBM$table, col = confMatGBM$byClass, 
+     main = paste("GBM - Accuracy =", round(confMatGBM$overall['Accuracy'], 4)))
+```
+
+## Conclusions  
+
+We can see the accuracy of the Random Forest is the winner with  0.9929, while GBM was second most accurate with an accuracy of 0.9609, and finally Decision Tree with an accuracy of 0.7244.
+
+Since this is the case, we can perform the prediction on the validation set using the Random Forest method to determine the 20 test cases.
+
+
+```{r}
+predictQuiz <- predict(modFitRF, newdata=testing)
+predictQuiz
+```
+
+
+
+
+
+
+
+
+
+
+
+
